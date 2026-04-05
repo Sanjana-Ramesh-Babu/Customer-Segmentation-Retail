@@ -76,10 +76,10 @@ docs/_build/
 target/
 
 # Power BI generated CSVs (regenerate with scripts/export_powerbi_datasets.py or Streamlit)
-powerbi/exports/*.csv
+
 
 # Last uploaded file from Streamlit dashboard
-uploads/
+
 
 # Jupyter Notebook
 .ipynb_checkpoints

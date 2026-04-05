@@ -1,0 +1,7 @@
+Metric,Value
+Silhouette score (higher = better separation),0.29455663193032716
+Davies–Bouldin index (lower = better),1.179446938516876
+Calinski–Harabasz score (higher = better),1984.0865998859551
+"K-Means inertia (within-cluster SS, PCA space)",5926.030701607934
+Between-cluster SS / Total SS,0.7811061785947281
+Mean distance between cluster centroids (PCA space),4.440085571304223
