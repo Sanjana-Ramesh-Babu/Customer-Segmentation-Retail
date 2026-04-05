@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Retail Store Customer Segmentation and Profiling
 
 <img src="reports/cseg.png" width=800px height=350px>
@@ -245,6 +244,3 @@ Link: https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis
 <b>Github:</b> https://github.com/allmeidaapedro
 
 <b>Gmail:</b> pedrooalmeida.net@gmail.com
-=======
-# Customer-Segmentation-Retail
->>>>>>> ae25d4c3151d16bb1b62548035eb29fdd826632d
