@@ -75,6 +75,12 @@ docs/_build/
 .pybuilder/
 target/
 
+# Power BI generated CSVs (regenerate with scripts/export_powerbi_datasets.py or Streamlit)
+powerbi/exports/*.csv
+
+# Last uploaded file from Streamlit dashboard
+uploads/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -118,6 +124,9 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
+
+# Streamlit secrets (Power BI embed URL, etc.)
+.streamlit/secrets.toml
 
 # Environments
 .env

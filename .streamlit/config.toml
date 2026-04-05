@@ -1,0 +1,13 @@
+[theme]
+primaryColor = "#0d47a1"
+backgroundColor = "#fafafa"
+secondaryBackgroundColor = "#e8eaf0"
+textColor = "#1a1a2e"
+font = "sans serif"
+
+[client]
+# Reduces header chrome; with CSS below avoids the toolbar “pill” where typing triggers Streamlit actions (e.g. Clear caches).
+toolbarMode = "minimal"
+
+[server]
+headless = true

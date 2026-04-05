@@ -22,6 +22,10 @@ Each folder/file content and purpose is described below:
 - modelling.ipynb: This notebook covers the clustering machine learning modeling.
 - data: This folder contains the raw data to be used in notebooks.
 
+<b>Web app (Streamlit) & Power BI:</b><br>
+- Run the interactive dashboard from the project root: <code>streamlit run app/streamlit_app.py</code> (K-Means metrics, 3D PCA map, CSV export).
+- Use <code>python -m scripts.export_powerbi_datasets</code> or the app’s export tab to generate CSVs under <code>powerbi/exports/</code> for Power BI Desktop; see <code>powerbi/README.md</code>.
+
 <b>Reports:</b> Store some images that are used for storytelling.
 
 <b>Scripts:</b> Store utility scripts used for EDA, modeling, exception handling, and artifacts retrieval. The files names are self explainable.
