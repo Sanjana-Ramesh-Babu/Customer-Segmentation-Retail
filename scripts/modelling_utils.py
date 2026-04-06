@@ -63,7 +63,12 @@ def feature_engineering(data):
         feat_eng_df.columns = [x.lower() for x in feat_eng_df.columns]
 
         # Converting the dt_customer column to datetime for feature engineering.
-        feat_eng_df['dt_customer'] = pd.to_datetime(feat_eng_df['dt_customer'], format='%d-%m-%Y')
+        feat_eng_df['dt_customer'] = pd.to_datetime(feat_eng_df['dt_customer'], dayfirst=True, errors='coerce')
+        if feat_eng_df['dt_customer'].isna().any():
+            raise ValueError(
+                "Could not parse one or more values in `dt_customer`. "
+                "Expected dates like `04-09-2012`, `04/09/2012`, or other day-first formats."
+            )
 
         # Dropping outlier rows representing inconsistent information.
         numerical_features = feat_eng_df.select_dtypes('number').columns.to_list()
@@ -84,7 +89,8 @@ def feature_engineering(data):
         feat_eng_df['children'] = feat_eng_df['kidhome'] + feat_eng_df['teenhome']
 
         # Creating a feature indicating customer's age.
-        feat_eng_df['age'] = 2023 - feat_eng_df['year_birth']
+        current_date = datetime.today()
+        feat_eng_df['age'] = current_date.year - feat_eng_df['year_birth']
 
         # Creating RFM model's features.
 
@@ -92,8 +98,7 @@ def feature_engineering(data):
         feat_eng_df['total_purchases'] = feat_eng_df['numcatalogpurchases'] + feat_eng_df['numdealspurchases'] + feat_eng_df['numstorepurchases'] + feat_eng_df['numwebpurchases']
 
         # Creating a relationship duration (in years, because of the long relationships present in the data) feature to get the frequency.
-        current_date = datetime.today()
-        feat_eng_df['relationship_duration'] = (current_date.year - feat_eng_df['dt_customer'].dt.year) 
+        feat_eng_df['relationship_duration'] = (current_date.year - feat_eng_df['dt_customer'].dt.year).clip(lower=1)
 
         # Creating the frequency variable.
         feat_eng_df['frequency'] = feat_eng_df['total_purchases'] / feat_eng_df['relationship_duration']

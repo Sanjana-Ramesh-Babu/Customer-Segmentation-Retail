@@ -175,26 +175,48 @@ def _encoding_probe_chunks(raw: bytes, max_total: int = 600_000) -> bytes:
     return raw[:part] + raw[n // 2 : n // 2 + part] + raw[-part:]
 
 
-def _detect_encoding(raw: bytes) -> str:
-    """
-    Pick an encoding suitable for the whole file (handles £ as 0xa3 in Latin-1 / cp1252, etc.).
-    """
+def _encoding_candidates(raw: bytes) -> list[str]:
+    """Return likely encodings in preference order for strict full-file decoding."""
+    candidates: list[str] = []
     try:
         from charset_normalizer import from_bytes
 
         best = from_bytes(raw).best()
         if best is not None and getattr(best, "encoding", None):
-            return str(best.encoding)
+            candidates.append(str(best.encoding))
     except Exception:
         pass
+
+    for enc in (
+        "utf-8-sig",
+        "utf-8",
+        "cp1252",
+        "iso-8859-1",
+        "latin-1",
+        "utf-16",
+        "utf-16-le",
+        "utf-16-be",
+    ):
+        if enc not in candidates:
+            candidates.append(enc)
+    return candidates
+
+
+def _decode_text(raw: bytes) -> tuple[str, str]:
+    """
+    Decode the whole file strictly so we never silently corrupt headers or values.
+    """
     probe = _encoding_probe_chunks(raw)
-    for enc in ("utf-8-sig", "utf-8", "cp1252", "iso-8859-1", "latin-1"):
+    last_err: Exception | None = None
+    for enc in _encoding_candidates(raw):
         try:
-            probe.decode(enc)
-            return enc
-        except UnicodeDecodeError:
+            probe.decode(enc, errors="strict")
+            text = raw.decode(enc, errors="strict")
+            return text, enc
+        except UnicodeDecodeError as e:
+            last_err = e
             continue
-    return "latin-1"
+    raise OSError(f"Could not decode CSV with supported encodings. Last error: {last_err}") from last_err
 
 
 def _sniff_delimiter(sample: str) -> str:
@@ -219,28 +241,10 @@ def read_tabular_bytes(raw: bytes) -> pd.DataFrame:
     Read CSV/TSV-like bytes: detect encoding (UTF-8, Windows-1252, Latin-1, …),
     sniff delimiter, then let pandas decode the full file (avoids UTF-8 errors on £ etc.).
     """
-    enc = _detect_encoding(raw)
-    sample = raw[: min(len(raw), 500_000)]
-    try:
-        sample_text = sample.decode(enc, errors="strict")
-    except UnicodeDecodeError:
-        enc = "latin-1"
-        sample_text = sample.decode(enc, errors="strict")
+    text, _ = _decode_text(raw)
+    sample_text = text[: min(len(text), 20_000)]
     sep = _sniff_delimiter(sample_text[:20000])
-    last_err: Exception | None = None
-    for attempt in (enc, "cp1252", "latin-1", "utf-8-sig", "utf-8"):
-        try:
-            return pd.read_csv(
-                io.BytesIO(raw),
-                sep=sep,
-                engine="python",
-                encoding=attempt,
-                encoding_errors="replace",
-            )
-        except (UnicodeDecodeError, LookupError, ValueError) as e:
-            last_err = e
-            continue
-    raise OSError(f"Could not decode CSV with supported encodings. Last error: {last_err}") from last_err
+    return pd.read_csv(io.StringIO(text), sep=sep, engine="python")
 
 
 def read_tabular_path(path: Union[str, Path]) -> pd.DataFrame:

@@ -25,6 +25,7 @@ from scripts.table_io import load_for_segmentation
 class SegmentationResult:
     clustering_df: pd.DataFrame
     customer_ids: pd.Series
+    load_mode: str
     X_pca: np.ndarray
     pca: PCA
     kmeans: KMeans
@@ -154,6 +155,7 @@ def run_segmentation(
     return SegmentationResult(
         clustering_df=clustering_df,
         customer_ids=customer_ids,
+        load_mode=load_mode,
         X_pca=X_pca,
         pca=pca,
         kmeans=kmeans,

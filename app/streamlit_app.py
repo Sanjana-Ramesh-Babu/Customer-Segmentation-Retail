@@ -10,6 +10,8 @@ import hashlib
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 _ROOT = Path(__file__).resolve().parents[1]
 _APP = Path(__file__).resolve().parent
 for _p in (_ROOT, _APP):
@@ -24,8 +26,8 @@ import streamlit.components.v1 as components
 from personas import (
     apply_persona_column,
     business_rank_column,
+    dynamic_story_for_cluster,
     persona_labels_for_clusters,
-    story_for_persona,
 )
 from scripts.exception import CustomException
 from scripts.segmentation_pipeline import export_powerbi_csvs as write_powerbi_csvs
@@ -119,6 +121,20 @@ def _power_bi_embed_url() -> str:
     return ""
 
 
+def _sample_data_candidates() -> list[Path]:
+    return [
+        _ROOT / "artifacts" / "marketing_campaign.csv",
+        _ROOT / "notebooks" / "data" / "marketing_campaign.csv",
+    ]
+
+
+def _existing_sample_data_path() -> Path | None:
+    for path in _sample_data_candidates():
+        if path.is_file():
+            return path
+    return None
+
+
 def _quality_story(silhouette: float) -> tuple[str, str]:
     """Plain-language group clarity (internal number is not shown by default)."""
     if silhouette >= 0.4:
@@ -128,6 +144,62 @@ def _quality_story(silhouette: float) -> tuple[str, str]:
     if silhouette >= 0.15:
         return "Usable with care", "Some overlap between groups — combine with your business judgment when choosing messages."
     return "Overlapping groups", "Consider fewer groups or richer data before major budget decisions."
+
+
+def _fmt_value(value: float, money: bool = False) -> str:
+    if pd.isna(value):
+        return "n/a"
+    value = float(value)
+    if money:
+        return f"${value:,.0f}" if abs(value) >= 100 else f"${value:,.2f}"
+    return f"{value:,.1f}" if abs(value) < 1000 else f"{value:,.0f}"
+
+
+def _build_run_story(
+    seg: pd.DataFrame,
+    cluster_summary: pd.DataFrame,
+    top_id: int,
+    top_name: str,
+) -> tuple[str, str]:
+    total_customers = len(seg)
+    top_count = int((seg["cluster_id"] == top_id).sum())
+    top_pct = 100 * top_count / total_customers if total_customers else 0
+
+    parts = [
+        f"The highest-value segment in this run is {top_name}, covering about {top_pct:.1f}% of the uploaded rows."
+    ]
+
+    if "monetary" in seg.columns:
+        total_spend = float(seg["monetary"].sum())
+        top_spend = float(seg.loc[seg["cluster_id"] == top_id, "monetary"].sum())
+        overall_avg_spend = float(seg["monetary"].mean()) if len(seg) else 0.0
+        top_avg_spend = float(seg.loc[seg["cluster_id"] == top_id, "monetary"].mean())
+        spend_share = 100 * top_spend / total_spend if total_spend else 0.0
+        multiplier = top_avg_spend / overall_avg_spend if overall_avg_spend else 0.0
+        parts.append(
+            f"It contributes about {spend_share:.1f}% of total spend in the file, with average spend {_fmt_value(top_avg_spend, money=True)} per customer"
+            f" ({multiplier:.2f}x the file average)."
+        )
+
+    top_row = cluster_summary.loc[cluster_summary["cluster_id"] == top_id].iloc[0]
+    if "frequency" in cluster_summary.columns:
+        parts.append(f"Average purchase frequency for this segment is {_fmt_value(top_row['frequency'])}.")
+    if "total_accepted_cmp" in cluster_summary.columns:
+        parts.append(f"Average campaign acceptance is {_fmt_value(top_row['total_accepted_cmp'])}, which helps identify a loyalty target.")
+
+    return "Dynamic loyalty opportunity", " ".join(parts)
+
+
+def _schema_note(load_mode: str) -> tuple[str, str]:
+    if load_mode == "marketing":
+        return (
+            "Retail schema detected",
+            "This upload matches the original marketing-style customer table, so the app can compute retail features like spend, frequency, campaign acceptance, and shopper personas.",
+        )
+    return (
+        "Generic numeric clustering",
+        "This upload did not match the full retail schema. The app still clustered the numeric columns it found, but retail-specific engineered features and named personas are simplified.",
+    )
 
 
 @st.cache_data(show_spinner=True)
@@ -145,9 +217,7 @@ def analyze_store_customers(content_signature: str, data_path: str, n_groups: in
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    default_csv = _ROOT / "notebooks" / "data" / "marketing_campaign.csv"
-    alt_csv = _ROOT / "artifacts" / "marketing_campaign.csv"
-    default_path = default_csv if default_csv.is_file() else alt_csv
+    default_path = _existing_sample_data_path()
 
     st.markdown(
         """
@@ -170,9 +240,9 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
     )
 
     if "data_path" not in st.session_state:
-        st.session_state.data_path = str(default_path.resolve())
+        st.session_state.data_path = str(default_path.resolve()) if default_path is not None else ""
         st.session_state.n_groups = 5
-        st.session_state.content_sig = _md5_path(Path(st.session_state.data_path))
+        st.session_state.content_sig = _md5_path(Path(st.session_state.data_path)) if default_path is not None else ""
 
     try:
         input_wrap = st.container(border=True)
@@ -211,6 +281,9 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
             dest.write_bytes(up.getvalue())
             st.session_state.data_path = str(dest.resolve())
         else:
+            if default_path is None:
+                st.error("Could not find the bundled sample data file in `artifacts/` or `notebooks/data/`.")
+                st.stop()
             st.session_state.data_path = str(default_path.resolve())
         st.session_state.n_groups = int(n_groups)
         st.session_state.content_sig = _md5_path(Path(st.session_state.data_path))
@@ -218,7 +291,9 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
 
     data_path = Path(st.session_state.data_path)
     if not data_path.is_file():
-        st.error("Could not find customer data. Add `marketing_campaign.csv` under `notebooks/data/` or upload a file.")
+        st.error(
+            "Could not find customer data. Add `marketing_campaign.csv` under `artifacts/` or `notebooks/data/`, or upload a file."
+        )
         st.stop()
 
     with st.spinner("Grouping customers by behaviour and profile…"):
@@ -229,15 +304,41 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
                 st.session_state.n_groups,
                 42,
             )
-        except ValueError as e:
-            st.error(str(e))
-            st.stop()
-        except CustomException as e:
-            st.error(str(e))
-            st.stop()
-        except Exception as e:
-            st.error(f"Could not read or analyze this file. Check the format and columns. ({e})")
-            st.stop()
+        except (ValueError, CustomException, Exception) as first_error:
+            fallback_candidates = [
+                p for p in _sample_data_candidates()
+                if p.is_file() and p.resolve() != data_path.resolve()
+            ]
+            if str(data_path.resolve()) not in {str(p.resolve()) for p in _sample_data_candidates()} or not fallback_candidates:
+                if isinstance(first_error, ValueError):
+                    st.error(str(first_error))
+                elif isinstance(first_error, CustomException):
+                    st.error(str(first_error))
+                else:
+                    st.error(f"Could not read or analyze this file. Check the format and columns. ({first_error})")
+                st.stop()
+
+            fallback_path = fallback_candidates[0]
+            try:
+                result = analyze_store_customers(
+                    _md5_path(fallback_path),
+                    str(fallback_path.resolve()),
+                    st.session_state.n_groups,
+                    42,
+                )
+                st.warning(
+                    f"Primary sample file failed to load; using fallback sample dataset at `{fallback_path}` instead."
+                )
+                st.session_state.data_path = str(fallback_path.resolve())
+                st.session_state.content_sig = _md5_path(fallback_path)
+            except Exception:
+                if isinstance(first_error, ValueError):
+                    st.error(str(first_error))
+                elif isinstance(first_error, CustomException):
+                    st.error(str(first_error))
+                else:
+                    st.error(f"Could not read or analyze this file. Check the format and columns. ({first_error})")
+                st.stop()
 
     try:
         write_powerbi_csvs(result, _ROOT / "powerbi" / "exports")
@@ -253,6 +354,8 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
     total_customers = len(seg)
     rank_col = business_rank_column(result.cluster_summary)
     ranked = result.cluster_summary.sort_values(rank_col, ascending=False)
+    cs = result.cluster_summary.copy()
+    cs["Shopper type"] = cs["cluster_id"].map(lambda x: persona_map.get(int(x), f"Group {x}"))
     top_id = int(ranked.iloc[0]["cluster_id"])
     top_name = persona_map[top_id]
     top_count = int((seg["cluster_id"] == top_id).sum())
@@ -267,6 +370,7 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
         share_label = "Share of rows — top group"
 
     st.markdown("### Your results")
+    schema_title, schema_text = _schema_note(result.load_mode)
     st.markdown(
         f'<div class="kpi-row">'
         f'<div class="kpi"><div class="label">Rows analyzed</div><div class="value">{total_customers:,}</div>'
@@ -281,15 +385,14 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
         unsafe_allow_html=True,
     )
 
+    st.caption(f"**{schema_title}:** {schema_text}")
+
+    loyalty_title, loyalty_text = _build_run_story(seg, result.cluster_summary, top_id, top_name)
     st.markdown(
         f"""
 <div class="loyalty-box">
-  <h3>⭐ Prosperous loyalty program (from the project story)</h3>
-  <p>The <strong>highest-spend group</strong> in this run is <strong>{top_name}</strong> — in the full write-up this maps to 
-  <strong>Prosperous Shoppers</strong> and drives a loyalty program named <strong>Prosperous</strong>.</p>
-  <p style="margin-top:0.65rem;"><strong>Example financial story</strong> (documented in the original analysis): 
-  total store revenue up about <strong>9%</strong>, roughly <strong>$125,228</strong> extra, after targeted offers and conversions from other groups. 
-  Your exact numbers change if your data or group count changes — use this as the <em>business narrative template</em>.</p>
+  <h3>⭐ {loyalty_title}</h3>
+  <p>{loyalty_text}</p>
 </div>
 """,
         unsafe_allow_html=True,
@@ -305,7 +408,13 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
         cols = st.columns(len(batch))
         for col, cid in zip(cols, batch):
             name = persona_map[cid]
-            tag, body = story_for_persona(name)
+            cluster_row = cs.loc[cs["cluster_id"] == cid].iloc[0]
+            tag, body = dynamic_story_for_cluster(
+                cluster_row=cluster_row,
+                cluster_summary=cs,
+                cluster_name=name,
+                load_mode=result.load_mode,
+            )
             with col:
                 st.markdown(
                     f'<div class="card-persona"><div class="tag">{tag}</div><h4>{name}</h4><p>{body}</p></div>',
@@ -314,9 +423,6 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
         row_start += 3
 
     st.subheader("Charts")
-    cs = result.cluster_summary.copy()
-    cs["Shopper type"] = cs["cluster_id"].map(lambda x: persona_map.get(int(x), f"Group {x}"))
-
     f1 = px.bar(
         cs.sort_values("customer_count", ascending=True),
         x="customer_count",
@@ -345,7 +451,7 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
     f2.update_layout(showlegend=False, yaxis_title=None)
     st.plotly_chart(f2, use_container_width=True)
 
-    if "pca_3" in seg.columns:
+    if {"pca_1", "pca_2", "pca_3"}.issubset(seg.columns):
         f3 = px.scatter_3d(
             seg,
             x="pca_1",
@@ -359,20 +465,19 @@ like “premium in-store buyers” vs “deal hunters on the web.” Same idea a
         )
         st.plotly_chart(f3, use_container_width=True)
         st.caption("Axes are combined behaviour scores — not single columns like income. They help **visualize** the groups.")
-
-    st.subheader("Power BI — data analysis")
-    pbi_url = _power_bi_embed_url()
-    exports_path = _ROOT / "powerbi" / "exports"
-    if pbi_url:
-        st.caption("Embedded view from your Power BI publish/embed link.")
-        components.iframe(pbi_url, height=720, scrolling=True)
-    else:
-        st.info(
-            f"Add your report’s **embed URL** to `.streamlit/secrets.toml` as `POWERBI_REPORT_EMBED_URL` "
-            f"(from Power BI Service: **File → Embed report** or **Publish to web**, depending on your account). "
-            f"This page will show the live dashboard here. "
-            f"Exported CSVs for building or refreshing that report: `{exports_path}`."
+    elif {"pca_1", "pca_2"}.issubset(seg.columns):
+        f3 = px.scatter(
+            seg,
+            x="pca_1",
+            y="pca_2",
+            color="Shopper type",
+            title="Customer map (2D fallback)",
+            labels={"pca_1": "Shopping pattern A", "pca_2": "Shopping pattern B"},
+            opacity=0.7,
+            height=560,
         )
+        st.plotly_chart(f3, use_container_width=True)
+        st.caption("Only two PCA dimensions were available for this upload, so the customer map is shown in 2D.")
 
     st.subheader("Download segmented customers")
     dl = seg.drop(columns=[c for c in ("pca_1", "pca_2", "pca_3") if c in seg.columns], errors="ignore")
